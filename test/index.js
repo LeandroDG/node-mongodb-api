@@ -147,8 +147,6 @@ describe("index.js", function() {
 
     describe("authenticate", function() {
 
-        this.timeout(5000);
-
         it("should fail if 'credentials' argument is missing or invalid.", function () {
 
             connector = new Connector(config);
@@ -252,7 +250,7 @@ describe("index.js", function() {
                 });
             });
 
-            it ("Second connection should be retrived from cache.", function (done) {
+            it ("A second connection should be retrived from cache.", function (done) {
                 connector = new Connector(config);
                 connector.authenticate({ username: "foo", password:"bar" }, function (err, data) {
                     assert.ok(!err);
@@ -263,6 +261,23 @@ describe("index.js", function() {
                         assert.equal(data.auth, auth);
                         done();
                     });
+                });
+            });
+
+            it ("After connection expired, a the second connection should return a new auth token.", function (done) {
+                config.timeout = 100;
+                connector = new Connector(config);
+                connector.authenticate({ username: "foo", password:"bar" }, function (err, data) {
+                    assert.ok(!err);
+                    var auth = data.auth;
+                    setTimeout(function() {
+                        connector.authenticate({ username: "foo", password:"bar" }, function (err, data) {
+                            assert.ok(!err);
+                            assert.ok(data);
+                            assert.notEqual(data.auth, auth);
+                            done();
+                        });
+                    }, config.timeout + 20);
                 });
             });
 
@@ -393,8 +408,6 @@ describe("index.js", function() {
 
     describe("command", function() {
 
-        this.timeout(5000);
-
         var connector;
 
         before(function () {
@@ -424,7 +437,7 @@ describe("index.js", function() {
             connector.command({}, function (err, data) {
                 assert.ok(!data);
                 assert.ok(err instanceof Error);
-                assert.equal(err.message, "'selector' argument is missing.");
+                assert.equal(err.message, "The following properties are missing: selector.");
                 done();
             });
         });

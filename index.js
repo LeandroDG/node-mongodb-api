@@ -51,6 +51,52 @@ module.exports = Connector = function(configuration) {
         });
     }
 
+    var hookMethods = function() {
+        // get methods and add as public functions
+        var methods = require("./lib/methods");
+
+        Object
+            .keys(methods)
+            .forEach(function (name) {
+
+                // get method's metadata
+                var method      = methods[name];
+                var args        = Object.keys(method.args);
+                var required    = args.filter(function (arg) { return method.args[arg]; });
+
+                // add method to the connector instance
+                self[name] = function (options, cb) {
+
+                    // Validates options arg
+                    if (!options || Array.isArray(options) || typeof options !== 'object') return cb(new Error("'options' argument is missing or invalid."));
+
+                    // Validates options's properties
+                    var missingProps = required
+                        .filter(function (arg) {
+                            var value = options[arg];
+                            return value == undefined || value === null;
+                        });
+
+                    if (missingProps.length > 0) return cb(new Error("The following properties are missing: " + missingProps.join(", ") + "."));
+
+                    // Get connection
+                    getItem(options, function (err, item) {
+                        
+                        if (err)    return cb(err);
+                        if (!item)  return cb(new Error("The server was not found or authentication failed."));
+
+                        try {
+                            // invokes method
+                            method.invoke(item.db, options, cb);
+                        } catch (err) {
+                            cb(err);
+                        }
+                    });
+
+                };
+            });
+    };
+
     this.authenticate = function (credentials, cb) {
 
         if (!credentials || typeof credentials !== 'object') return cb(new Error("'credentials' argument must be an object instance."));
@@ -110,23 +156,7 @@ module.exports = Connector = function(configuration) {
         return (count === 0) ? cb() : join.when(function() { cb(); });
     };
 
-    this.command = function (options, cb) {
-
-        if (!options || Array.isArray(options) || typeof options !== 'object') return cb(new Error("'options' argument is missing or invalid."));
-        if (options.selector === undefined || options.selector === null) return cb(new Error("'selector' argument is missing."));
-
-        getItem(options, function (err, item) {
-            
-            if (err)    return cb(err);
-            if (!item)  return cb(new Error("The server was not found or athentication failed."));
-
-            try {
-                item.db.command(options.selector, options.options, cb);
-            } catch (err) {
-                cb(err);
-            }
-        });
-    };
+    hookMethods();
 };
 
 // Returns a new copy of an object or value
@@ -146,7 +176,6 @@ var clone =  function(source) {
     Object.keys(source).map(function(prop) { result[prop] = clone(source[prop]); });
     return result;
 };
-
 
 // Returns a new copy of source, containing the properties passed as arguments only. 
 var just = function (source) {
