@@ -1,0 +1,37 @@
+{
+    "name": "mongodb-api",
+    "version": "0.0.1",
+    "description": "Module to invoke Mongo DB services",
+    "author": "Kidozen <support@kidozen.com>",
+    "contributors": [ 
+        {
+        "name": "Silvio Massari",
+        "email": "silvio@kidozen.com"
+        }  
+    ],
+    "main": "index.js",
+    "scripts": {
+        "test": "mocha -R spec test"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/kidozen/node-mongodb-api.git"
+    },
+    "keywords": [
+        "kidozen",
+        "connector",
+        "mongodb"
+    ],
+    "license": "MIT",
+    "dependencies": {
+        "mongodb": "1.3.19",
+        "mem-cache": "0.0.3",
+        "node-uuid": "1.4.0",
+        "join": "2.3.1"
+    },
+    "devDependencies": {
+        "mocha" : "1.11.0",
+        "assert": "0.4.9",
+        "sinon" : "1.7.3"
+    }
+}
