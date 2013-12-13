@@ -1,9 +1,17 @@
+
+//require("locus")
+
 var url         = require("url");
 var assert      = require("assert");
 var Db          = require('mongodb').Db;
 var MongoClient = require('mongodb').MongoClient;
 var Connector   = require("../index.js");
 var sinon       = require("sinon");
+var Join        = require("join");
+
+var winston = require("winston");
+winston.clear();
+//winston.add(winston.transports.Console, {level: "debug"});
 
 describe("index.js", function() {
 
@@ -37,7 +45,7 @@ describe("index.js", function() {
     describe("constructor", function() {
 
         describe ("url", function() {
-            it ("Should fail if 'url' property was not set or has a non string value.", function() {
+            it ("Should fail if 'url' property is an empty string or it is not a string value.", function() {
                 [{}, { url: null }, { url: "" }, { url: 100 }, { url: true }, { url: [] }]
                     .forEach(function (config) {
                         try {
@@ -102,7 +110,7 @@ describe("index.js", function() {
 
         describe ("timeout", function() {
 
-            it ("Should fail if timeout is not a number or smaller than 100.", function() {            
+            it ("Should fail if timeout is not a number or it is smaller than 100.", function() {            
                 ["foo", [], {}, true, 99]
                     .forEach(function (value) {
                         try {
@@ -123,6 +131,32 @@ describe("index.js", function() {
             it ("Should override timeout.", function() {
                 var connector = new Connector({ url: "mongodb://foo", timeout: 100 });
                 assert.equal(100, connector.config.timeout);
+            });
+        });
+
+        describe ("methodTimeout", function() {
+
+            it ("Should fail if methodTimeout is not a number or it is smaller than 100.", function() {            
+                ["foo", [], {}, true, 99]
+                    .forEach(function (value) {
+                        try {
+                            new Connector({ url: "mongodb://foo", methodTimeout: value });
+                            assert.fail();                
+                        } catch (e) {
+                            assert.ok(e instanceof Error);
+                            assert.equal(e.message, "'methodTimeout' property must be a number equal or greater than 100.");
+                        }
+                    });
+            });
+
+            it ("Should set default value of methodTimeout.", function() {
+                var connector = new Connector({ url: "mongodb://foo" });
+                assert.equal((15 * 60 * 1000), connector.config.methodTimeout);
+            });
+
+            it ("Should override methodTimeout.", function() {
+                var connector = new Connector({ url: "mongodb://foo", methodTimeout: 100 });
+                assert.equal(100, connector.config.methodTimeout);
             });
         });
 
@@ -339,6 +373,94 @@ describe("index.js", function() {
         });
     });
 
+    describe("lookupMethod", function() {
+
+        it ("should fail on invalid method's name", function () {
+
+            connector = new Connector(config);
+
+            [
+                null,       // name was not passed
+                100,        // a number
+                {},         // an object
+                true,       // a boolean
+                "",         // an empty string
+                "foo",      // db. prefix is missing
+                "db",       // method nme is missing
+                "db.",      // db method name is missing
+                "db..find", // collection name is missing
+                "db.foo.",  // collection method is missing
+            ]
+                .forEach(function (name) {
+                    connector.lookupMethod(name, function (err, method) {
+                        assert.ok(!method);
+                        assert.ok(err instanceof Error);
+                        assert.equal("'name' argument is missing or invalid.", err.message);
+                    });
+                });
+        });
+
+        it ("should return null if db method does not exist", function (done) {
+            connector = new Connector(config);
+            connector.lookupMethod("db.invalidDbName", function (err, method) {
+                assert.ok(!err);
+                assert.ok(!method);
+                done();
+            });
+        });
+        
+        it ("should return null if col method does not exist", function (done) {
+            connector = new Connector(config);
+            connector.lookupMethod("db.foo.invalidColName", function (err, method) {
+                assert.ok(!err);
+                assert.ok(!method);
+                done();
+            });
+        });
+
+        it ("should return a db method", function (done) {
+            connector = new Connector(config);
+            connector.lookupMethod("db.command", function (err, method) {
+                assert.ok(!err);
+                assert.ok(method);
+                done();
+            });
+        });
+
+        it ("should return a col method", function (done) {
+            connector = new Connector(config);
+            connector.lookupMethod("db.foo.find", function (err, method) {
+                assert.ok(!err);
+                assert.ok(method);
+                done();
+            });
+        });
+
+        it ("returned method should be stored for future use", function (done) {
+            connector = new Connector(config);
+            connector.lookupMethod("db.command", function (err, method) {
+                assert.ok(!err);
+                assert.ok(method);
+                assert.ok(connector["db.command"] === method);
+                done();
+            });
+        });
+
+        it ("stored method should be removed after cache timeout", function (done) {
+            config.methodTimeout = 100;
+            connector = new Connector(config);
+            connector.lookupMethod("db.command", function (err, method) {
+                assert.ok(!err);
+                assert.ok(method);
+                assert.ok(connector["db.command"] === method);
+                setTimeout(function () {
+                    assert.ok(!connector["db.command"]);
+                    done();
+                }, config.methodTimeout + 20);
+            });
+        });
+    });
+
     describe("authentication and method invocation sequence on secured DB", function () {
 
         before(function (done) {
@@ -370,23 +492,31 @@ describe("index.js", function() {
             config.username = "foo";
             config.password = "bar";
             connector = new Connector(config);
-            connector.command({ selector: { ping: 1 } }, function (err, data) {
+            connector.lookupMethod("db.command", function (err, method) {
                 assert.ok(!err);
-                assert.ok(data);
-                done();
+                assert.ok(method);
+                method({ selector: { ping: 1 } }, function (err, data) {
+                    assert.ok(!err);
+                    assert.ok(data);
+                    done();
+                });
             });
         });
 
         it ("when method is invoked with credentials, the method 'authenticate' will be invoked", function (done) {
 
             connector = new Connector(config);
-
-            var spyAuth = sinon.spy(connector, "authenticate");
-            connector.command({ selector: { ping: 1 }, username: "foo", password: "bar" }, function (err, data) {
+            connector.lookupMethod("db.command", function (err, method) {
                 assert.ok(!err);
-                assert.ok(data);
-                assert.ok(spyAuth.called);
-                done();
+                assert.ok(method);
+                
+                var spyAuth = sinon.spy(connector, "authenticate");
+                method({ selector: { ping: 1 }, username: "foo", password: "bar" }, function (err, data) {
+                    assert.ok(!err);
+                    assert.ok(data);
+                    assert.ok(spyAuth.called);
+                    done();
+                });
             });
         });
 
@@ -395,24 +525,36 @@ describe("index.js", function() {
             connector = new Connector(config);
             connector.authenticate({ username: "foo", password: "bar" }, function (err, data) {
     
-                var spyAuth = sinon.spy(connector, "authenticate");
-                connector.command({ selector: { ping: 1 }, auth: data.auth }, function (err, data) {
+                connector.lookupMethod("db.command", function (err, method) {
                     assert.ok(!err);
-                    assert.ok(data);
-                    assert.ok(!spyAuth.called);
-                    done();
+                    assert.ok(method);
+
+                    var spyAuth = sinon.spy(connector, "authenticate");
+                    method({ selector: { ping: 1 }, auth: data.auth }, function (err, data) {
+                        assert.ok(!err);
+                        assert.ok(data);
+                        assert.ok(!spyAuth.called);
+                        done();
+                    });
                 });
             });
         });
     });
 
-    describe("command", function() {
+    describe("invoking methods", function() {
 
         var connector;
 
-        before(function () {
+        before(function (done) {
             // create connector
             connector = new Connector({ url: cs });
+
+            // add method
+            connector.lookupMethod("db.command", function (err, method) {
+                assert.ok(!err);
+                assert.equal(typeof method, "function");
+                done();
+            });
         });
         
         after(function (done) {
@@ -422,10 +564,10 @@ describe("index.js", function() {
             connector = null;
         });
 
-        it ("should fail if options is not an object instance.", function () {
+        it ("should fail if 'options' argument is not an object instance.", function () {
             ["foo", [], 100, true, null]
                 .forEach(function (options) {
-                    connector.command(options, function (err, data) {
+                    connector["db.command"](options, function (err, data) {
                         assert.ok(!data);
                         assert.ok(err instanceof Error);
                         assert.equal(err.message, "'options' argument is missing or invalid.");
@@ -433,8 +575,8 @@ describe("index.js", function() {
                 });
         });
 
-        it ("should fail if 'selector' property is missing.", function (done) {
-            connector.command({}, function (err, data) {
+        it ("should fail if required property is missing.", function (done) {
+            connector["db.command"]({}, function (err, data) {
                 assert.ok(!data);
                 assert.ok(err instanceof Error);
                 assert.equal(err.message, "The following properties are missing: selector.");
@@ -443,7 +585,7 @@ describe("index.js", function() {
         });
 
         it ("should run ok.", function (done){
-            connector.command({ selector: { ping: 1 } }, function (err, data) {
+            connector["db.command"]({ selector: { ping: 1 } }, function (err, data) {
                 assert.ok(!err);
                 assert.ok(data);
                 done();

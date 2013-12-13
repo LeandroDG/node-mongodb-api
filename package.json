@@ -24,6 +24,7 @@
     ],
     "license": "MIT",
     "dependencies": {
+        "winston": "0.7.2",
         "mongodb": "1.3.19",
         "mem-cache": "0.0.3",
         "node-uuid": "1.4.0",
@@ -32,6 +33,7 @@
     "devDependencies": {
         "mocha" : "1.11.0",
         "assert": "0.4.9",
-        "sinon" : "1.7.3"
+        "sinon" : "1.7.3",
+        "locus" : "0.0.4"
     }
 }

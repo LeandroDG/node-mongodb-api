@@ -1,16 +1,23 @@
 var url         = require("url");
 var uuid        = require("node-uuid");
+var winston     = require("winston");
 var Db          = require('mongodb').Db;
 var MongoClient = require('mongodb').MongoClient;
+var Cursor      = require('mongodb').Cursor;
 var Cache       = require("mem-cache");
 var Join        = require("join");
+var dbMethods   = require("./lib/dbMethods");
+var colMethods  = require("./lib/collectionMethods");
 
 module.exports = Connector = function(configuration) {
+
+    winston.info("MongoDB: Constructor. Start");
+    winston.debug("MongoDB: Constructor configuration: ", configuration);
 
     if (!configuration  || Array.isArray(configuration) ||  typeof configuration !== 'object') throw new Error("'configuration' argument is invalid.");
 
     var self    = this;
-    var config  = just(configuration || {}, "url", "timeout", "username", "password");
+    var config  = just(configuration || {}, "url", "timeout", "username", "password", "methodTimeout");
 
     // Validate configuration
     if (!config.url   || typeof(config.url)!=="string") throw new Error("'url' property is missing or invalid.");
@@ -25,8 +32,10 @@ module.exports = Connector = function(configuration) {
     
     // Set defaults
     config.timeout = config.timeout || (15 * 60 * 1000);
+    config.methodTimeout = config.methodTimeout || (15 * 60 * 1000);
 
     if (typeof config.timeout !== 'number' || config.timeout < 100) throw new Error("'timeout' property must be a number equal or greater than 100.");
+    if (typeof config.methodTimeout !== 'number' || config.methodTimeout < 100) throw new Error("'methodTimeout' property must be a number equal or greater than 100.");
 
     Object.defineProperty(this, "config", {
       enumerable: false,
@@ -35,69 +44,168 @@ module.exports = Connector = function(configuration) {
       value: config
     });
 
-    var cacheAuth   = new Cache({ timeout: config.timeout }); // Mongodb's clients by auth token
-    var cacheCs     = new Cache({ timeout: config.timeout }); // auth tokens by connectio string
+    var cacheAuth   = new Cache({ timeout: config.timeout });               // Mongodb's clients by auth token
+    var cacheCs     = new Cache({ timeout: config.timeout });               // auth tokens by connectio string
+    var cacheMethod = new Cache({ timeout: config.methodTimeout });   // cache for lookupMethod  
+ 
+    cacheAuth.on("expired", function (item) {
+        winston.info("MongoDB: connection expired. " + item.auth);
+        if (item.db) db.close();
+    });
+
+    cacheMethod.on("expired", function (item) {
+        winston.info("MongoDB: method expired. " + item.key);
+        delete self[item.key];
+    });
 
     var getItem = function (options, cb) {
 
+        winston.info("MongoDB: getItem.")
+        winston.debug("  options:", options);
+
         if (options.auth) {
             var item = cacheAuth.get(options.auth);
+            winston.info("MongoDB: getItem. Found at cacheAuth? " + !!item)
             if (item) return cb(null, item);
         }
 
         self.authenticate(options, function (err, data) {
             if (err) return cb(err);
+            winston.info("MongoDB: getItem. Found at cacheAuth? " + !!item)
             cb (null, cacheAuth.get(data.auth));            
         });
     }
 
-    var hookMethods = function() {
-        // get methods and add as public functions
-        var methods = require("./lib/methods");
+    var createMethod = function(name, metadata, invoke) {
 
-        Object
-            .keys(methods)
-            .forEach(function (name) {
+        winston.info("MongoDB: createMethod.");
+        winston.debug("  name:", name);
+        winston.debug("  metadata:", metadata);
 
-                // get method's metadata
-                var method      = methods[name];
-                var args        = Object.keys(method.args);
-                var required    = args.filter(function (arg) { return method.args[arg]; });
+        if (!metadata) return null;
 
-                // add method to the connector instance
-                self[name] = function (options, cb) {
+        var argNames  = Object.keys(metadata.args);
+        var required    = argNames.filter(function (name) { return metadata.args[name]; });
 
-                    // Validates options arg
-                    if (!options || Array.isArray(options) || typeof options !== 'object') return cb(new Error("'options' argument is missing or invalid."));
+        winston.debug("  argNames:", argNames);
+        winston.debug("  required:", required);
 
-                    // Validates options's properties
-                    var missingProps = required
-                        .filter(function (arg) {
-                            var value = options[arg];
-                            return value == undefined || value === null;
-                        });
+        return function (options, cb) {
 
-                    if (missingProps.length > 0) return cb(new Error("The following properties are missing: " + missingProps.join(", ") + "."));
 
-                    // Get connection
-                    getItem(options, function (err, item) {
-                        
-                        if (err)    return cb(err);
-                        if (!item)  return cb(new Error("The server was not found or authentication failed."));
+            winston.info ("MongoDB: Invoking. method " + name);
+            winston.debug("  options:", options);
 
-                        try {
-                            // invokes method
-                            method.invoke(item.db, options, cb);
-                        } catch (err) {
-                            cb(err);
-                        }
+            // Validates options arg
+            if (!options || Array.isArray(options) || typeof options !== 'object') return cb(new Error("'options' argument is missing or invalid."));
+
+            // Validates options's properties
+            var missingProps = required
+                .filter(function (arg) {
+                    var value = options[arg];
+                    return value === undefined || value === null;
+                });
+
+            if (missingProps.length > 0) return cb(new Error("The following properties are missing: " + missingProps.join(", ") + "."));
+
+            // Get connection
+            getItem(options, function (err, item) {
+                
+                if (err)    return cb(err);
+                if (!item)  return cb(new Error("The server was not found or authentication failed."));
+
+                try {
+
+                    // creates method's arguments array from options
+                    var argsArray = argNames.map(function (arg) {
+                        return options[arg];
                     });
 
-                };
+                    // adds callback as last method argument
+                    argsArray.push(function (err, result){
+                        if (!err && result instanceof Cursor) return result.toArray(cb);
+                        cb(err, result);
+                    })
+
+                    invoke(item, argsArray);
+
+                } catch (err) {
+                    cb(err);
+                }
             });
+        };
+    };
+
+     // For each method metadata, it adds a new public method to the instance
+    this.lookupMethod = function (name, cb) {
+
+        winston.info ("MongoDB: lookupMethod");
+        winston.debug("  name:", name);
+
+        // Must be an string that does not ends with dot
+        if (!name || typeof name !== 'string') return cb(new Error("'name' argument is missing or invalid."));
+
+        var segments = name.split(".");
+        if (segments[0] !== "db") return cb(new Error("'name' argument is missing or invalid."));
+
+        // db method or collection method?
+        if (segments.length === 1) {
+
+            // the method's name is missing
+            return cb(new Error("'name' argument is missing or invalid."));
+
+        } else if (segments.filter(function (name) { return name.length > 0; }).length !== segments.length) {
+
+            // there is a least an empty string segment              
+            return cb(new Error("'name' argument is missing or invalid."));
+        }
+
+        // Get mongoDB's method name 
+        var methodName = segments.pop();
+
+        // Is a db method or a collection method?
+        var method;
+        if (segments.length === 1) {
+
+            // it is a db method
+            winston.info("MongoDB: creating a DB's method.");
+            method = createMethod(methodName, dbMethods[methodName], function (item, argsArray) {
+
+                winston.debug("MongoDB: Invoking db." + methodName, argsArray);
+                item.db[methodName].apply(item.db, argsArray);
+            });
+
+        } else {
+
+            // it is a collection method
+            var colName = segments.slice(1).join(".");
+            winston.info("MongoDB: creating a Collection's method.");
+            winston.info("  collectionName: " + colName);
+
+            method = createMethod(methodName, colMethods[methodName], function (item, argsArray) {
+            
+                winston.debug('MongoDB: Invoking db.collection("' + colName + '").' + methodName, argsArray);
+                var col = item.db.collection(colName);
+                col[methodName].apply(col, argsArray);    
+            });
+        }
+
+        // store for futures invocations
+        winston.info("MongoDB: Was method found? " + !!method);
+
+        if (method) {
+            cacheMethod.set(name, null);
+            self[name] = method;
+        }
+
+        // returns method
+        cb (null, method);
     };
 
     this.authenticate = function (credentials, cb) {
+
+        winston.info("MongoDB: authenticate");
+        winston.debug("  credentials: ", credentials);
 
         if (!credentials || typeof credentials !== 'object') return cb(new Error("'credentials' argument must be an object instance."));
         if (credentials.username && typeof credentials.username !== 'string') return cb(new Error("'username' property is invalid."));
@@ -115,22 +223,37 @@ module.exports = Connector = function(configuration) {
             cs = url.format(config.url);
         }
         
+        winston.debug ("  cs:", cs);
+
         var data = { 
             auth: cacheCs.get(cs) || uuid.v4(), 
             username: username
         };
 
-        if (cacheAuth.get(data.auth)) return cb(null, data);
+        winston.debug ("  data:", data);
 
+        if (cacheAuth.get(data.auth)) {
+            winston.info("MongoDB: auth was found at cacheAuth");
+            return cb(null, data);
+        };
+
+        winston.info("MongoDB: auth was found not found. Creating a new connection.");
+    
         MongoClient.connect(cs, function (err, db) {
-            if (err) return cb(err);
-            
+    
+            if (err) {
+                winston.info("MongoDB: connection creation failed.", err);
+                return cb(err);
+            }
+
+            winston.info("MongoDB: connection created!");
             var item = {
                 db      : db,
                 username: username,
                 password: password
             };
             
+            winston.debug("  Adding item to cache.", item);
             cacheAuth.set(data.auth, item);
             cacheCs.set(cs, data.auth);
             cb(null, data);
@@ -139,6 +262,8 @@ module.exports = Connector = function(configuration) {
 
     this.close = function (cb) {
 
+        winston.info("MongoDB: close");
+
         var count = 0;
         var join = new Join();
         
@@ -146,6 +271,7 @@ module.exports = Connector = function(configuration) {
             var item = cacheAuth[auth];
             if (item && item.db) {
                 count++;
+                winston.info("MongoDB: closing " + auth);
                 item.db.close(join.add());
             }
         })
@@ -156,7 +282,7 @@ module.exports = Connector = function(configuration) {
         return (count === 0) ? cb() : join.when(function() { cb(); });
     };
 
-    hookMethods();
+    winston.info("MongoDB: Constructor. End.");
 };
 
 // Returns a new copy of an object or value
