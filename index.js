@@ -9,6 +9,12 @@ var Join        = require("join");
 var dbMethods   = require("./lib/dbMethods");
 var colMethods  = require("./lib/collectionMethods");
 
+var level = process.argv.indexOf("--level");
+level = ((level > -1) ? process.argv[level + 1] : null) || "info"; 
+
+winston.clear();
+winston.add(winston.transports.Console, { colorize: true, level: level });
+
 module.exports = Connector = function(configuration) {
 
     winston.info("MongoDB: Constructor. Start");
@@ -60,25 +66,28 @@ module.exports = Connector = function(configuration) {
 
     var getItem = function (options, cb) {
 
-        winston.info("MongoDB: getItem.")
+        winston.verbose("MongoDB: getItem.")
         winston.debug("  options:", options);
 
         if (options.auth) {
             var item = cacheAuth.get(options.auth);
-            winston.info("MongoDB: getItem. Found at cacheAuth? " + !!item)
+            winston.verbose("MongoDB: getItem. Found at cacheAuth? " + !!item)
             if (item) return cb(null, item);
         }
 
         self.authenticate(options, function (err, data) {
             if (err) return cb(err);
-            winston.info("MongoDB: getItem. Found at cacheAuth? " + !!item)
-            cb (null, cacheAuth.get(data.auth));            
+            var item = cacheAuth.get(data.auth);
+            winston.verbose("MongoDB: getItem. Found at cacheAuth? " + !!item)
+            if (item) return cb(null, item);
+            winston.debug("MongoDB: Should not reach this point!");
+            cb(new Error("Authentication succeed but client was not created."));
         });
     }
 
     var createMethod = function(name, metadata, invoke) {
 
-        winston.info("MongoDB: createMethod.");
+        winston.verbose("MongoDB: createMethod.");
         winston.debug("  name:", name);
         winston.debug("  metadata:", metadata);
 
@@ -117,15 +126,15 @@ module.exports = Connector = function(configuration) {
                 try {
 
                     // creates method's arguments array from options
-                    var argsArray = argNames.map(function (arg) {
-                        return options[arg];
-                    });
+                    var argsArray = argNames
+                        .map(function (arg) { return options[arg]; })
+                        .filter(function (value) { return value !== undefined; });
 
                     // adds callback as last method argument
-                    argsArray.push(function (err, result){
+                    argsArray.push(function (err, result) {
                         if (!err && result instanceof Cursor) return result.toArray(cb);
                         cb(err, result);
-                    })
+                    });
 
                     invoke(item, argsArray);
 
@@ -168,7 +177,7 @@ module.exports = Connector = function(configuration) {
         if (segments.length === 1) {
 
             // it is a db method
-            winston.info("MongoDB: creating a DB's method.");
+            winston.verbose("MongoDB: creating a DB's method.");
             method = createMethod(methodName, dbMethods[methodName], function (item, argsArray) {
 
                 winston.debug("MongoDB: Invoking db." + methodName, argsArray);
@@ -179,8 +188,8 @@ module.exports = Connector = function(configuration) {
 
             // it is a collection method
             var colName = segments.slice(1).join(".");
-            winston.info("MongoDB: creating a Collection's method.");
-            winston.info("  collectionName: " + colName);
+            winston.verbose("MongoDB: creating a Collection's method.");
+            winston.verbose("  collectionName: " + colName);
 
             method = createMethod(methodName, colMethods[methodName], function (item, argsArray) {
             
@@ -191,7 +200,7 @@ module.exports = Connector = function(configuration) {
         }
 
         // store for futures invocations
-        winston.info("MongoDB: Was method found? " + !!method);
+        winston.verbose("MongoDB: Was method found? " + !!method);
 
         if (method) {
             cacheMethod.set(name, null);
@@ -237,23 +246,23 @@ module.exports = Connector = function(configuration) {
             return cb(null, data);
         };
 
-        winston.info("MongoDB: auth was found not found. Creating a new connection.");
+        winston.verbose("MongoDB: auth token was found at caheAuth. Creating a new connection.");
     
         MongoClient.connect(cs, function (err, db) {
     
             if (err) {
-                winston.info("MongoDB: connection creation failed.", err);
+                winston.verbose("MongoDB: connection creation failed.", err);
                 return cb(err);
             }
 
-            winston.info("MongoDB: connection created!");
+            winston.verbose("MongoDB: connection created!");
             var item = {
                 db      : db,
                 username: username,
                 password: password
             };
             
-            winston.debug("  Adding item to cache.", item);
+            winston.debug("  Adding item to cache.", data.auth);
             cacheAuth.set(data.auth, item);
             cacheCs.set(cs, data.auth);
             cb(null, data);
@@ -271,7 +280,7 @@ module.exports = Connector = function(configuration) {
             var item = cacheAuth[auth];
             if (item && item.db) {
                 count++;
-                winston.info("MongoDB: closing " + auth);
+                winston.verbose("MongoDB: closing " + auth);
                 item.db.close(join.add());
             }
         })
