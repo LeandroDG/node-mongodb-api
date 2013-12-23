@@ -105,7 +105,7 @@ callback must be a function.
 
 
 ### Methods for a db instance
-* [addUser](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#addUser) (`{ username: ..., password: ...[, options: ...] }`, `callback`)
+* [addUser](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#addUser) (`{ usr: ..., pwd: ...[, options: ...] }`, `callback`)
 * [collectionNames](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#collectionNames) (`{ [collectionName: ...][, options: ...] }`, `callback`)
 * [command](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#command) (`{ selector: ...[, options: ...] }`, `callback`)
 * [createCollection](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#createCollection) (`{ collectionName: ...[, options: ...] }`, `callback`)
@@ -116,7 +116,7 @@ callback must be a function.
 * [ensureIndex](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#ensureIndex) (`{ collectionName: ..., fieldOrSpec: ...[, options: ...] }`, `callback`)
 * [lastError](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#lastError) (`{ [options: ...] }`, `callback`)
 * [previousErrors](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#previousErrors) (`{ [options: ...] }`, `callback`)
-* [removeUser](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#removeUser) (`{ username: ...[, options: ...] }`, `callback`)
+* [removeUser](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#removeUser) (`{ usr: ...[, options: ...] }`, `callback`)
 * [renameCollection](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#renameCollection) (`{ fromCollection: ..., toCollectionName: ...[, options: ...] }`, `callback`)
 * [resetErrorHistory](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#resetErrorHistory) (`{ [options: ...] }`, `callback`)
 

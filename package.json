@@ -1,6 +1,6 @@
 {
     "name": "mongodb-api",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "description": "Module to invoke Mongo DB services",
     "author": "Kidozen <support@kidozen.com>",
     "contributors": [ 
