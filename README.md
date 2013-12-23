@@ -117,7 +117,7 @@ callback must be a function.
 * [lastError](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#lastError) (`{ [options: ...] }`, `callback`)
 * [previousErrors](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#previousErrors) (`{ [options: ...] }`, `callback`)
 * [removeUser](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#removeUser) (`{ usr: ...[, options: ...] }`, `callback`)
-* [renameCollection](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#renameCollection) (`{ fromCollection: ..., toCollectionName: ...[, options: ...] }`, `callback`)
+* [renameCollection](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#renameCollection) (`{ fromCollection: ..., toCollection: ...[, options: ...] }`, `callback`)
 * [resetErrorHistory](http://mongodb.github.io/node-mongodb-native/api-generated/db.html#resetErrorHistory) (`{ [options: ...] }`, `callback`)
 
 ### Methods for a collection instance

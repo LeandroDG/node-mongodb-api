@@ -93,11 +93,62 @@ module.exports = Connector = function(configuration) {
 
         if (!metadata) return null;
 
-        var argNames  = Object.keys(metadata.args);
+        var argNames    = Object.keys(metadata.args);
         var required    = argNames.filter(function (name) { return metadata.args[name]; });
 
         winston.debug("  argNames:", argNames);
         winston.debug("  required:", required);
+
+
+
+        var executionPipe = [];
+
+        // adds 'before' function to the pipe
+        if (typeof metadata.before === 'function') executionPipe.push(function (context, pipeCb) {
+            metadata.before(context, pipeCb);
+        });
+
+        // adds to the pipe the invocation to the method
+        executionPipe.push (function (context, pipeCb) {
+
+            // adds callback as last method argument
+            context.args.push(function (err, result) {
+
+                if (!err && result instanceof Cursor) return result.toArray(function (err, result) {
+                    context.err = err;
+                    context.result = result;
+                    pipeCb();
+                });
+
+                context.err = err;
+                context.result = result;
+                pipeCb();
+            });
+
+            invoke(context.item, context.args);
+        });
+
+        // adds 'after' function to the pipe
+        if (typeof metadata.after === 'function') executionPipe.push(function (context, pipeCb) {
+            metadata.after(context, pipeCb);
+        });
+
+
+        var runPipe = function(index, context, cb) {
+            if (index < executionPipe.length) {
+                // execute task
+                executionPipe[index](context, function (err) {
+                    // check for errors
+                    if (err) return cb(err); 
+
+                    // execute next task
+                    runPipe(index+1, context, cb);
+                });
+            } else {
+                // all tasks were executed
+                cb();
+            }
+        };
 
         return function (options, cb) {
 
@@ -126,17 +177,18 @@ module.exports = Connector = function(configuration) {
                 try {
 
                     // creates method's arguments array from options
-                    var argsArray = argNames
-                        .map(function (arg) { return options[arg]; })
-                        .filter(function (value) { return value !== undefined; });
+                    var context = {
+                        item: item,
+                        args: argNames
+                            .map(function (arg) { return options[arg]; })
+                            .filter(function (value) { return value !== undefined; })
+                    };
 
-                    // adds callback as last method argument
-                    argsArray.push(function (err, result) {
-                        if (!err && result instanceof Cursor) return result.toArray(cb);
-                        cb(err, result);
+                    // run Pipe
+                    runPipe(0, context, function (err) {
+                        if (err) return cb(err);
+                        cb(context.err, context.result);
                     });
-
-                    invoke(item, argsArray);
 
                 } catch (err) {
                     cb(err);
