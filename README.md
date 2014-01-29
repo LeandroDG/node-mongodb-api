@@ -12,7 +12,7 @@ Use npm to install the module:
 > npm install mongodb-api
 ```
 
-## Runing tests
+## Running tests
 
 Use npm to run the set of tests
 
